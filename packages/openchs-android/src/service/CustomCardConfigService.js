@@ -64,15 +64,18 @@ class CustomCardConfigService extends BaseService {
         const defaults = config && typeof config.getTranslations === 'function'
             ? config.getTranslations()
             : {};
-        const keys = Object.keys(defaults);
-        if (keys.length === 0) return {};
         const i18n = this.getService(MessageService).getI18n();
-        return keys.reduce((acc, key) => {
-            const translated = i18n.t(key);
-            const hasTranslation = translated !== key;
-            acc[key] = hasTranslation ? translated : (defaults[key] || key);
-            return acc;
-        }, {});
+        // Resolve per access so the template can reference any org translation key, not just keys declared on the card.
+        // Precedence: org translation (any locale) → card English default → key.
+        return new Proxy({}, {
+            get(_target, key) {
+                if (typeof key !== 'string') return undefined;
+                const translated = i18n.t(key);
+                if (translated !== key) return translated;
+                if (defaults[key] != null) return defaults[key];
+                return key;
+            }
+        });
     }
 }
 
