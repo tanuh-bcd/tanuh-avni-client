@@ -10397,10 +10397,10 @@ open@^7.4.2:
     grunt "^1.0.3"
     webpack "^4.13.0"
 
-openchs-models@1.33.38:
-  version "1.33.38"
-  resolved "https://registry.npmjs.org/openchs-models/-/openchs-models-1.33.38.tgz"
-  integrity sha512-OLPIeEks8/oNsXKEKu23X/dVlLNrXT5O7ZP7YTVCoTER8dJCpjicQjneZHT7GGiFfMevlDlIvGKuPlr+cmdNHg==
+openchs-models@1.33.39:
+  version "1.33.39"
+  resolved "https://registry.npmjs.org/openchs-models/-/openchs-models-1.33.39.tgz"
+  integrity sha512-wXwNmsQjd7sZoymLXKbihbH0PIibZvftCtI7r7ypViZU2DlKaykQ8QNcxTG0eO+2ULTMj+LuhwWS6QdN4fOowg==
   dependencies:
     uuid "^9.0.1"
 
@@ -12084,10 +12084,10 @@ ripemd160@^2.0.0, ripemd160@^2.0.1, ripemd160@^2.0.3:
     hash-base "^3.1.2"
     inherits "^2.0.4"
 
-"rules-config@github:openchs/rules-config#7f34ac91826bbaabb27bf9d86bf7cecb8710d1d8":
+"rules-config@github:openchs/rules-config#5a2a72a19c7c72c05a27c79589feef22542d6d5e":
   version "0.0.1"
-  resolved "git+ssh://git@github.com/openchs/rules-config.git#7f34ac91826bbaabb27bf9d86bf7cecb8710d1d8"
-  integrity sha512-VBgk2oDGtnW5ldfPd+zVXO7ZPTyt6CqsD24ws2WszV29GEBzN2Z6oeiboxaueLnNGGVNNeDMHKc21k4//3/aNw==
+  resolved "git+ssh://git@github.com/openchs/rules-config.git#5a2a72a19c7c72c05a27c79589feef22542d6d5e"
+  integrity sha512-ZWfNSrVWmxeHPubUtpHI2kq49gMz1Hlz4ycSaECZoqQCvbEajC0feBQHK9oufT1THw6fKa3q2mO6xZ/xwGbdfQ==
 
 run-parallel-limit@^1.0.5:
   version "1.1.0"
