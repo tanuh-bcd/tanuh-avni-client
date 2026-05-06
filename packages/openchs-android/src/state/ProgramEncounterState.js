@@ -87,6 +87,10 @@ class ProgramEncounterState extends AbstractDataEntryState {
         return ruleService.validateAgainstRule(this.programEncounter, this.formElementGroup.form, ProgramEncounter.schema.name);
     }
 
+    async validateEntityAgainstRuleAsync(ruleService) {
+        return await ruleService.validateAgainstRuleAsync(this.programEncounter, this.formElementGroup.form, ProgramEncounter.schema.name);
+    }
+
     async executeRule(ruleService, context) {
         let decisions = await ruleService.getDecisions(this.programEncounter, ProgramEncounter.schema.name);
         context.get(ConceptService).addDecisions(this.programEncounter.observations, decisions.encounterDecisions);

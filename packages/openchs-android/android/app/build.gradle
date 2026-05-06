@@ -14,7 +14,7 @@ googleServices {
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    debuggableVariants = ["genericDebug", "lfeDebug", "sakhiDebug"]
+    debuggableVariants = ["genericDebug", "lfeDebug", "sakhiDebug", "tanuhDebug"]
     // Autolinking enabled - modules included via rn-modules.gradle
     autolinkLibrariesWithApp()
 }
@@ -147,6 +147,15 @@ android {
             keyPassword System.getenv("gramin_KEY_PASSWORD")
             enableV1Signing false
         }
+        tanuh {
+            // TANUH builds are produced on the partner's developer machine. The keystore lives there;
+            // see tools/edge-model/README.md for the one-time `make tanuh-setup` keystore generation flow.
+            storeFile file("${System.getenv("KEY_STORE_PREFIX") ?: ""}tanuh-release-key.keystore")
+            storePassword System.getenv("tanuh_KEYSTORE_PASSWORD")
+            keyAlias "${System.getenv("KEY_STORE_PREFIX") ?: ""}${System.getenv("tanuh_KEY_ALIAS")}"
+            keyPassword System.getenv("tanuh_KEY_PASSWORD")
+            enableV1Signing false
+        }
     }
     buildTypes {
         release {
@@ -206,6 +215,16 @@ android {
             signingConfig signingConfigs.sakhi
             manifestPlaceholders = [bugsnagAPIKey: System.getenv("GRAMIN_BUGSNAG_API_KEY") ?: "dummy"]
         }
+        tanuh {
+            // TANUH HealthForge — on-device oral-cancer screening flavour. Build artefacts
+            // (encrypted edge-model blob + registry.json with AES key) land under
+            // src/tanuh/assets/models/ at build time and are gitignored.
+            // See tools/edge-model/README.md for the cold-start build flow.
+            applicationId "org.tanuh.openchsclient"
+            resValue "string", "app_name", "TANUH"
+            signingConfig signingConfigs.tanuh
+            manifestPlaceholders = [bugsnagAPIKey: System.getenv("OPENCHS_CLIENT_BUGSNAG_API_KEY") ?: "dummy"]
+        }
     }
     namespace 'com.openchsclient'
     sourceSets {
@@ -244,6 +263,7 @@ dependencies {
     // Keep Avni-specific native dependencies if any
     
     implementation 'com.google.ai.edge.litert:litert:1.0.1'
+    implementation 'org.tensorflow:tensorflow-lite-metadata:0.4.4'
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0-alpha01'

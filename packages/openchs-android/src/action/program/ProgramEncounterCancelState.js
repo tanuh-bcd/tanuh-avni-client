@@ -61,6 +61,10 @@ class ProgramEncounterCancelState extends AbstractDataEntryState {
         return ruleService.validateAgainstRule(this.programEncounter, this.formElementGroup.form, 'EncounterCancellation');
     }
 
+    async validateEntityAgainstRuleAsync(ruleService) {
+        return await ruleService.validateAgainstRuleAsync(this.programEncounter, this.formElementGroup.form, 'EncounterCancellation');
+    }
+
     getEffectiveDataEntryDate() {
         return this.programEncounter.cancelDateTime;
     }

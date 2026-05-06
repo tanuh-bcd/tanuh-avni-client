@@ -15,6 +15,7 @@ import _ from "lodash";
 import {DraftEncounter, ObservationsHolder} from "openchs-models";
 import DraftEncounterService from '../../service/draft/DraftEncounterService';
 import DraftConfigService from "../../service/DraftConfigService";
+import {dispatchHandleNext} from "../common/DispatchHelpers";
 
 function getPreviousEncounter(action, form, context) {
     const previousEncounter = action.encounter.individual.findLastEncounterOfType(action.encounter, [action.encounter.encounterType.name]);
@@ -107,17 +108,7 @@ export class EncounterActions {
     }
 
     static onNext(state, action, context) {
-        const newState = state.clone();
-        if (newState.wizard.isLastPage()) {
-            // Last page may run async decision rules (e.g. edge model inference).
-            // Fire handleNextAsync in the background; action.completed handles navigation when ready.
-            // Non-last pages stay on the sync path so Redux state updates immediately.
-            newState.handleNextAsync(action, context).catch(e =>
-                console.error('EncounterActions.onNext async error', e)
-            );
-        } else {
-            newState.handleNext(action, context);
-        }
+        const newState = dispatchHandleNext(state.clone(), action, context, 'EncounterActions.onNext');
         if (state.saveDrafts) {
             EncounterActions.saveDraftEncounter(newState.encounter, newState.validationResults, context)
         }

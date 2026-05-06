@@ -1,13 +1,12 @@
-# Edge Model Assets
+# Edge Model Assets (main flavour)
 
-Place the TFLite model file here:
+The main flavour ships **no model bytes**. `registry.json` here is an empty placeholder
+read by `EdgeModelService` at app boot.
 
-```
-models/edge_model.tflite
-```
+Flavours that need on-device inference (currently `tanuh`) override `registry.json` and
+add an encrypted model under their own `assets/models/` at build time. See
+`tools/edge-model/README.md` for the cold-start flow.
 
-This file is loaded at runtime by `TFLiteModule` and accessed via the `edgeModelService`
-in rule params (`params.services.edgeModelService.runInference(inputArray)`).
-
-The `.tflite` binary is not checked into the repo. Obtain it from the model training pipeline
-and place it here before building the APK.
+For dev-time experimentation with the inference pipeline, the public placeholder model
+lives at `tools/edge-model/source/sample-model.tflite`. Use the encryption CLI to
+produce a tanuh-flavour build that exercises it.

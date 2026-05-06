@@ -16,6 +16,7 @@ import IndividualService from "../../service/IndividualService";
 import {ObservationsHolder} from "openchs-models";
 import DraftProgramEncounterService from "../../service/draft/DraftProgramEncounterService";
 import DraftConfigService from "../../service/DraftConfigService";
+import {dispatchHandleNext} from "../common/DispatchHelpers";
 
 class ProgramEncounterActions {
     static getInitialState() {
@@ -116,8 +117,7 @@ class ProgramEncounterActions {
     }
 
     static onNext(state, action, context) {
-        const newState = state.clone();
-        newState.handleNext(action, context);
+        const newState = dispatchHandleNext(state.clone(), action, context, 'ProgramEncounterActions.onNext');
         if (state.saveDrafts) {
             ProgramEncounterActions.saveDraftProgramEncounter(newState.programEncounter, newState.validationResults, context);
         }
