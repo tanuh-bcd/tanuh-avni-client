@@ -28,6 +28,10 @@ and NDK 27.1.12297006 (matches the rest of the repo).
 ```bash
 source ~/.nvm/nvm.sh && nvm use 20
 
+# Install JS dependencies, apply patches, run prebuild. Required on a fresh checkout;
+# repeat only when package.json or patches change.
+make deps
+
 # Generate a release keystore for signing the tanuh APK (keystore stays local; never committed).
 make tanuh-setup
 ```

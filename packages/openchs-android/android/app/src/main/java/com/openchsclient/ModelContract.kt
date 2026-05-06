@@ -133,12 +133,7 @@ data class ModelContract(
             }
         }
 
-        private data class ImageGeometry(val height: Int, val width: Int, val channels: Int, val layout: Layout) {
-            operator fun component1() = height
-            operator fun component2() = width
-            operator fun component3() = channels
-            operator fun component4() = layout
-        }
+        private data class ImageGeometry(val height: Int, val width: Int, val channels: Int, val layout: Layout)
 
         /**
          * Disambiguate CHW vs HWC from the tensor shape. RGB images have either
