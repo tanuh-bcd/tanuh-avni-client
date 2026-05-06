@@ -110,7 +110,7 @@
     "react-native-zip-archive": "6.0.8",
     "realm": "12.14.2",
     "redux": "4.2.0",
-    "rules-config": "github:openchs/rules-config#5a2a72a19c7c72c05a27c79589feef22542d6d5e",
+    "rules-config": "github:openchs/rules-config#f5f651905ac26dc98b9259245a2c3802bb59f3fe",
     "stacktrace-js": "2.0.2",
     "transducers-js": "0.4.174",
     "uuid": "^9.0.1"
