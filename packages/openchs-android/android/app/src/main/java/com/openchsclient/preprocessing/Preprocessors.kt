@@ -1,6 +1,7 @@
 package com.openchsclient.preprocessing
 
 import android.graphics.Bitmap
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -209,6 +210,35 @@ object MeanTargetBgrRoundedPreprocessor : ImagePreprocessor {
                 data[i * 3 + 2] = orderedPlanes[2][i]
             }
         }
+
+        // Diagnostic logging — emits per-channel input stats so we can compare against the
+        // TANUH PoC (~/IdeaProjects/aiapp) on the same image. If the model saturates on
+        // both apps, the model is the issue. If it saturates here but not on the PoC, the
+        // divergence is in this preprocessor and one of these stats will differ.
+        Log.d("Preproc", "MeanTargetBgrRounded: w=$w h=$h interp=$interpolation order=$channelOrder layout=$layout " +
+            "scale=$scale meanTarget=$meanTarget round=$roundDecimals uint8Cast=$uint8Cast")
+        Log.d("Preproc", "  rawPixelMean: R=%.4f G=%.4f B=%.4f".format(meanR, meanG, meanB))
+        Log.d("Preproc", "  perChannelScale: R=%.6f G=%.6f B=%.6f".format(scaleR, scaleG, scaleB))
+        Log.d("Preproc", "  tensorStats: ${planeSummary("plane0", data, 0, plane)}")
+        Log.d("Preproc", "  tensorStats: ${planeSummary("plane1", data, plane, plane)}")
+        Log.d("Preproc", "  tensorStats: ${planeSummary("plane2", data, 2 * plane, plane)}")
+
         return ImagePreprocessor.Result(data, longArrayOf(1, 3, h.toLong(), w.toLong()))
+    }
+
+    /** Diagnostic-only helper. Per-plane mean / min / max / first-3-pixels summary. */
+    private fun planeSummary(label: String, data: FloatArray, offset: Int, plane: Int): String {
+        var sum = 0.0
+        var lo = Float.POSITIVE_INFINITY
+        var hi = Float.NEGATIVE_INFINITY
+        for (i in 0 until plane) {
+            val v = data[offset + i]
+            sum += v
+            if (v < lo) lo = v
+            if (v > hi) hi = v
+        }
+        val mean = sum / plane
+        val sample = (0 until 3).map { data[offset + it] }
+        return "%s mean=%.6f min=%.6f max=%.6f first3=%s".format(label, mean, lo, hi, sample)
     }
 }

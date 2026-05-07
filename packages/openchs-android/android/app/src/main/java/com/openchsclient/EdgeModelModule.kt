@@ -3,6 +3,7 @@ package com.openchsclient
 import android.content.ComponentCallbacks2
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.*
@@ -217,9 +218,19 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
             val raw = BitmapFactory.decodeFile(imagePath)
                 ?: throw IllegalArgumentException("Cannot decode image at '$imagePath'. Check the path and file format.")
 
+            // Diagnostic — log decoded bitmap geometry + EXIF orientation. If EXIF reports
+            // anything other than 1 (NORMAL), the on-screen image is rotated relative to the
+            // raw pixels we feed the model. The TANUH PoC has the same `decodeFile` codepath,
+            // so for parity-comparison runs both apps should agree. But if training data was
+            // pre-rotated and field images aren't, the model sees inputs it wasn't trained on.
+            val exif = try { ExifInterface(imagePath) } catch (e: Exception) { null }
+            val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
+            Log.d(TAG, "decodeFile: w=${raw.width} h=${raw.height} config=${raw.config} exifOrientation=$orientation")
+
             val preprocessor = Preprocessors.resolve(contract.preprocessorName)
             val preprocessed = preprocessor.preprocess(raw, contract.preprocessorParams)
             val output = engine.run(handle, preprocessed)
+            Log.d(TAG, "outputTensor: size=${output.size} first8=${output.take(8)}")
 
             val decoder = Decoders.resolve(contract.decoderName)
             promise.resolve(decoder.decode(output, longArrayOf(output.size.toLong()), contract.decoderParams))
