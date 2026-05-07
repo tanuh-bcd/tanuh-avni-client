@@ -37,6 +37,62 @@ validation, not for unrestricted public distribution.
 Requires Node 20 (already pinned via `.nvmrc`), Java 17, Android SDK build-tools 35.0.0
 and NDK 27.1.12297006 (matches the rest of the repo).
 
+### Platform prerequisites
+
+**Linux (Ubuntu / Debian):** `keytool` ships with the JDK, not as its own package. If
+`make tanuh-setup` reports `keytool: command not found`:
+
+```bash
+sudo apt update
+sudo apt install openjdk-17-jdk-headless
+```
+
+Verify with `keytool -help` and `java -version`. If Java is installed via SDKMAN or Android
+Studio's bundled JBR but not on PATH, the binary is at `$JAVA_HOME/bin/keytool`.
+
+**Android SDK location.** Gradle resolves the SDK via either `ANDROID_HOME` or
+`packages/openchs-android/android/local.properties`. Common Linux setup:
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin"
+```
+
+Or per-checkout:
+```bash
+echo "sdk.dir=$HOME/Android/Sdk" > packages/openchs-android/android/local.properties
+```
+
+**Android NDK 27.1.12297006 must be installed exactly.** AGP auto-creates an empty NDK
+folder named after some other version (e.g. `27.0.12077973`) when its auto-download flow
+fails partway, then chokes on `did not have a source.properties file`. Fix:
+
+```bash
+# remove the broken empty folder if present
+rm -rf ~/Android/Sdk/ndk/27.0.12077973   # (or whichever version Gradle complains about)
+
+# install the right one — via Android Studio: Tools → SDK Manager → SDK Tools tab
+# → tick "Show Package Details" → expand NDK (Side by side) → check 27.1.12297006
+
+# or via cmdline-tools if you have them:
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.1.12297006"
+
+# verify
+ls ~/Android/Sdk/ndk/27.1.12297006/source.properties   # must print the file
+```
+
+**Network.** Gradle resolves the React Native build plugins from `plugins.gradle.org`. If
+you're behind a corporate proxy, the `foojay-resolver-convention` plugin lookup fails. Set:
+```properties
+# ~/.gradle/gradle.properties
+systemProp.https.proxyHost=<host>
+systemProp.https.proxyPort=<port>
+systemProp.http.proxyHost=<host>
+systemProp.http.proxyPort=<port>
+```
+
+### Bootstrap
+
 ```bash
 source ~/.nvm/nvm.sh && nvm use 20
 
@@ -49,11 +105,14 @@ make tanuh-setup
 ```
 
 `make tanuh-setup` creates `tanuh-release-key.keystore` in the repo root and prompts for
-the keystore + key passwords. Export them as env vars before each build:
+the keystore + key passwords. Modern keytool defaults to PKCS12, which uses one password
+for both keystore and key. Export before each release build:
 
 ```bash
 export tanuh_KEYSTORE_PASSWORD='…'
 export tanuh_KEY_ALIAS='tanuh'
+# tanuh_KEY_PASSWORD only needed if you used JKS (-storetype JKS) with distinct passwords.
+# build.gradle falls back to keystore password when KEY_PASSWORD is unset.
 ```
 
 ## Per-build flow
@@ -198,3 +257,81 @@ dynamic class loading.
 
 `EdgeModelModule.kt` itself does not need to change — only the engine inventory map at
 construction time.
+
+## Installing a built APK on a device
+
+`make tanuh-apk` produces split APKs per ABI:
+
+```
+build/outputs/apk/tanuh/release/app-tanuh-arm64-v8a-release.apk      # most modern phones
+build/outputs/apk/tanuh/release/app-tanuh-armeabi-v7a-release.apk    # older 32-bit ARM
+build/outputs/apk/tanuh/release/app-tanuh-x86-release.apk            # legacy emulators
+build/outputs/apk/tanuh/release/app-tanuh-x86_64-release.apk         # x86_64 emulators (e.g. Genymotion)
+```
+
+Pick the ABI that matches the target device. For modern phones, that's `arm64-v8a`; for
+Genymotion's default x86_64 image, that's `app-tanuh-x86_64-release.apk`.
+
+If multiple devices are connected (e.g. a Genymotion emulator and a phone via USB),
+`adb install` errors with `more than one device/emulator`. Disambiguate with `-s`:
+
+```bash
+adb devices                                                    # list connected devices/serials
+adb -s <serial> install -r build/outputs/apk/tanuh/release/<flavor>.apk
+```
+
+If the device already has an older build signed with a different key, you'll see
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Uninstall the prior copy first:
+
+```bash
+adb -s <serial> uninstall org.tanuh.openchsclient
+adb -s <serial> install build/outputs/apk/tanuh/release/<flavor>.apk
+```
+
+## Troubleshooting
+
+### `keytool: command not found` on Linux
+JDK isn't installed (or not on PATH). See platform prerequisites above —
+`sudo apt install openjdk-17-jdk-headless` on Ubuntu/Debian.
+
+### `[CXX1101] NDK at … did not have a source.properties file`
+AGP auto-downloaded the NDK partially and left an empty folder. Delete that folder and
+install the right NDK (27.1.12297006) explicitly. See platform prerequisites.
+
+### `Plugin [id: 'org.gradle.toolchains.foojay-resolver-convention'] was not found`
+Gradle can't reach `plugins.gradle.org`. Check `curl -sI https://plugins.gradle.org/`.
+Configure proxy in `~/.gradle/gradle.properties` if behind a corporate firewall.
+
+### `Duplicate class com.facebook.jni.* found in modules fbjni-0.7.0 and fbjni-java-only-0.2.2`
+PyTorch Mobile transitively pulls `fbjni-java-only:0.2.2`, which clashes with React Native
+0.77's `fbjni:0.7.0`. The fix is in `app/build.gradle` — `fbjni-java-only` is excluded
+from PyTorch's deps. If a future PyTorch upgrade reintroduces the clash, replicate the
+exclusion for the new version.
+
+### `This file can not be opened as a file descriptor; it is probably compressed`
+aapt2 compressed an asset that needs to be mmap-able. Add the extension to
+`androidResources.noCompress` in `app/build.gradle`. Currently covered: `bin`, `pt`,
+`ptl`, `tflite`, `onnx`. Adding a new model format → add the extension here.
+
+### `Failed to load encrypted model: AEADBadTagException` or SHA-256 mismatch
+The encrypted blob was rebuilt with a different key/IV than what's recorded in
+`registry.json`, or the blob was tampered/corrupted in the APK. Run `make tanuh-clean`
+followed by `make tanuh-encrypt` (or `make tanuh-apk`) to regenerate consistently.
+
+### Release APK crashes on inference but debug build works
+R8 stripped or renamed a JNI-resolved class. PyTorch's `org.pytorch.**` and
+`com.facebook.fbjni.**` are kept by `proguard-rules.pro`. If you add a new JNI-using
+library or a new `EdgeModelModule`/plugin class that's reflected on, add a `-keep` rule.
+
+### Inference returns nonsense / saturated outputs
+Most likely a preprocessing divergence vs the AI team's PoC. Compare per-channel raw
+pixel means, scale factors, and per-plane tensor stats — they're logged at `Log.d("Preproc", …)`
+on every inference. `adb logcat -s Preproc EdgeModelModule` and run the same image
+through the PoC app at `~/IdeaProjects/aiapp` to compare. Common culprits: BGR vs RGB
+ordering, EXIF orientation not applied, mean-target value mismatch.
+
+### `SigningConfig "tanuh" is missing required property "storePassword"`
+`tanuh_KEYSTORE_PASSWORD` env var isn't exported. See the bootstrap section above.
+
+### Multiple devices error: `more than one device/emulator`
+See "Installing a built APK on a device" above for the `-s <serial>` flag.
