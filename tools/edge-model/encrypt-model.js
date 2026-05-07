@@ -2,8 +2,9 @@
 /**
  * encrypt-model.js — offline encryption CLI for TANUH edge-model integration.
  *
- * Reads a plaintext .tflite, encrypts with AES-GCM-256 using a fresh random key + IV,
- * and emits artefacts into the tanuh flavour's asset directory:
+ * Format-agnostic: reads any plaintext model file (.pt / .tflite / .onnx / …), encrypts
+ * with AES-GCM-256 using a fresh random key + IV, and emits artefacts into the tanuh
+ * flavour's asset directory:
  *
  *   <out-dir>/<modelKey>.bin     — [12-byte IV][ciphertext][16-byte GCM tag]
  *   <out-dir>/registry.json      — registry entry for this model (key + sha256 + override)
@@ -12,17 +13,17 @@
  * that model + contract travel together — see ~/.claude/plans/composed-tumbling-bachman.md.
  *
  * Honest security framing: encrypted blob + AES key shipping in the same APK is
- * obfuscation, not §5.1 protection — it defeats casual extraction (the plaintext .tflite
+ * obfuscation, not §5.1 protection — it defeats casual extraction (the plaintext model
  * is not in the APK) but not a determined reverse-engineer who reads the bundled key.
  * Acceptable for the interim gdrive-distribution flow until the proper
  * organisation_config-delivered key + S3 path lands.
  *
  * Usage:
  *   node encrypt-model.js \
- *     --in       tools/edge-model/source/oral-cancer-v1.tflite \
+ *     --in       tools/edge-model/source/mvit2_fold5_2_latest_traced.pt \
  *     --out-dir  packages/openchs-android/android/app/src/tanuh/assets/models \
- *     --model-key oral-cancer-v1 \
- *     [--override tools/edge-model/sample-override.json] \
+ *     --model-key mvit2_fold5_2_latest_traced \
+ *     [--override tools/edge-model/tanuh-mvit2-override.json] \
  *     [--default-model]
  *
  * The script is dependency-free — uses Node's built-in `crypto` and `fs`.
@@ -84,7 +85,7 @@ function main() {
     const authTag = cipher.getAuthTag();
 
     // On-disk layout: [IV (12)] [ciphertext] [auth tag (16)]
-    // Matches TFLiteModule.decryptToDirectBuffer in the Kotlin side.
+    // Matches EdgeModelModule.decryptToDirectBuffer in the Kotlin side.
     const blob = Buffer.concat([iv, ciphertext, authTag]);
     const blobPath = path.join(outDir, `${modelKey}.bin`);
     fs.writeFileSync(blobPath, blob);

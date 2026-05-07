@@ -4,18 +4,24 @@
 #   make tanuh-setup     # one-time: generate signing keystore
 #   make tanuh-apk       # per-build: encrypt model → assemble signed APK
 #
-# Plaintext model: tools/edge-model/source/<TANUH_MODEL_KEY>.tflite (gitignored)
+# The on-device runtime is PyTorch Mobile (org.pytorch:pytorch_android:1.13.1) and the
+# bundled model is a TorchScript .pt file. Versions are pinned to match the TANUH AI team's
+# PoC at ~/IdeaProjects/aiapp — clinical accuracy was validated against that exact runtime.
+#
+# Plaintext model: tools/edge-model/source/<TANUH_MODEL_KEY>.pt    (gitignored)
 # Encrypted output: packages/openchs-android/android/app/src/tanuh/assets/models/
-#                   {<TANUH_MODEL_KEY>.bin, registry.json}    (gitignored)
+#                   {<TANUH_MODEL_KEY>.bin, registry.json}         (gitignored)
 # Signed APK:       packages/openchs-android/android/app/build/outputs/apk/tanuh/release/app-tanuh-release.apk
 #
 # See tools/edge-model/README.md for the full documentation.
 
-# Override on the command line: TANUH_MODEL_KEY=oral-cancer-v2 make tanuh-apk
-TANUH_MODEL_KEY ?= oral-cancer-v1
-TANUH_MODEL_SRC := tools/edge-model/source/$(TANUH_MODEL_KEY).tflite
+# Override on the command line: TANUH_MODEL_KEY=mvit2_fold5_2_latest_traced make tanuh-apk
+TANUH_MODEL_KEY ?= mvit2_fold5_2_latest_traced
+TANUH_MODEL_SRC := tools/edge-model/source/$(TANUH_MODEL_KEY).pt
 TANUH_OUT_DIR   := packages/openchs-android/android/app/src/tanuh/assets/models
-TANUH_OVERRIDE  := tools/edge-model/sample-override.json
+# Default override captures the PoC pipeline. Swap on the command line for a different model:
+#   TANUH_OVERRIDE=tools/edge-model/my-other-model-override.json make tanuh-apk
+TANUH_OVERRIDE  := tools/edge-model/tanuh-mvit2-override.json
 TANUH_KEYSTORE  := tanuh-release-key.keystore
 
 tanuh-setup: ## One-time: generate the tanuh release keystore.
@@ -32,14 +38,13 @@ tanuh-setup: ## One-time: generate the tanuh release keystore.
 	@echo ""
 	@echo "Keystore created. Set these env vars in your shell before running 'make tanuh-apk':"
 	@echo "  export tanuh_KEYSTORE_PASSWORD='<the keystore password you just chose>'"
-	@echo "  export tanuh_KEY_PASSWORD='<the key password you just chose>'"
 	@echo "  export tanuh_KEY_ALIAS='tanuh'"
 
 tanuh-encrypt: ## Encrypt the plaintext model and emit registry.json.
 	@if [ ! -f "$(TANUH_MODEL_SRC)" ]; then \
 		echo "ERROR: $(TANUH_MODEL_SRC) not found."; \
-		echo "Drop your plaintext .tflite there (filename = TANUH_MODEL_KEY + .tflite)."; \
-		echo "  cp /path/to/$(TANUH_MODEL_KEY).tflite tools/edge-model/source/"; \
+		echo "Drop your plaintext .pt there (filename = TANUH_MODEL_KEY + .pt)."; \
+		echo "  cp /path/to/$(TANUH_MODEL_KEY).pt tools/edge-model/source/"; \
 		exit 1; \
 	fi
 	@mkdir -p $(TANUH_OUT_DIR)
@@ -76,6 +81,36 @@ tanuh-clean: ## Remove the per-build encrypted blob and registry.json.
 	rm -f $(TANUH_OUT_DIR)/*.bin $(TANUH_OUT_DIR)/registry.json
 	@echo "Cleared $(TANUH_OUT_DIR)/"
 
+# Placeholder model setup for local development without TANUH's actual .pt.
+# Downloads PyTorch's official Hello World traced MobileNetV2 (~20 MB, ImageNet 224x224 RGB,
+# 1000-class output) and encrypts it under TANUH_MODEL_KEY=placeholder using
+# tools/edge-model/placeholder-override.json. Inference values are unrelated to TANUH's
+# domain — use it to verify the build/load/inference plumbing only.
+PLACEHOLDER_PT_URL := https://raw.githubusercontent.com/pytorch/android-demo-app/master/HelloWorldApp/app/src/main/assets/model.pt
+PLACEHOLDER_PT_DST := tools/edge-model/source/placeholder.pt
+
+tanuh-placeholder: ## Download a public placeholder .pt and encrypt as 'placeholder' for local builds.
+	@if [ ! -f "$(PLACEHOLDER_PT_DST)" ]; then \
+		echo "Downloading placeholder model from PyTorch's android-demo-app..."; \
+		mkdir -p $$(dirname $(PLACEHOLDER_PT_DST)); \
+		curl -fSL -o $(PLACEHOLDER_PT_DST) $(PLACEHOLDER_PT_URL); \
+	else \
+		echo "$(PLACEHOLDER_PT_DST) already present — skipping download."; \
+	fi
+	@mkdir -p $(TANUH_OUT_DIR)
+	node tools/edge-model/encrypt-model.js \
+		--in $(PLACEHOLDER_PT_DST) \
+		--out-dir $(TANUH_OUT_DIR) \
+		--model-key placeholder \
+		--override tools/edge-model/placeholder-override.json \
+		--default-model
+	@echo ""
+	@echo "Encrypted as 'placeholder' under $(TANUH_OUT_DIR). Now run:"
+	@echo "  make run_packager        (in another terminal)"
+	@echo "  make run_app_tanuh_dev"
+	@echo "Then in a decision rule:"
+	@echo "  await params.services.edgeModelService.runInferenceOnImage('placeholder', imagePath)"
+
 # Debug-flavour iteration helpers — install + launch tanuh debug build via gradlew + adb.
 # No encryption, no signing, no Metro release bundle. Requires `make run_packager` running
 # in another terminal so the app can fetch the dev JS bundle.
@@ -96,4 +131,4 @@ run_app_tanuh_dev: ## Install + launch tanuh debug build, prod backend with dev 
 run-app-tanuh: run_app_tanuh
 run-app-tanuh-dev: run_app_tanuh_dev
 
-.PHONY: tanuh-setup tanuh-encrypt tanuh-apk tanuh-clean run_app_tanuh run_app_tanuh_dev run-app-tanuh run-app-tanuh-dev
+.PHONY: tanuh-setup tanuh-encrypt tanuh-apk tanuh-clean tanuh-placeholder run_app_tanuh run_app_tanuh_dev run-app-tanuh run-app-tanuh-dev

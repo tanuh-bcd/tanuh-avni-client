@@ -21,8 +21,12 @@ The cold-start build flow is documented in `tools/edge-model/README.md`. In shor
 make tanuh-setup           # generate keystore
 
 # every build
+nvm use
+make deps
+export tanuh_KEYSTORE_PASSWORD='<the keystore password you chose>'"
+export tanuh_KEY_ALIAS='tanuh'"
 cp /path/to/oral-cancer.tflite tools/edge-model/source/
-make tanuh-apk             # → encrypts model, writes assets, signs APK
+TANUH_MODEL_KEY=sample-model make tanuh-apk           # → encrypts model, writes assets, signs APK
 ```
 
 When the build finishes, `app-tanuh-release.apk` is the artefact to distribute.

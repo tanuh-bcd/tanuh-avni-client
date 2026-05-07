@@ -101,10 +101,12 @@ packages/openchs-android/.jso/
 /fillLogin.sh
 
 # Edge-model build artefacts — produced per-build by tools/edge-model/encrypt-model.js
-# on the partner's developer machine. Never committed: contains AES key + encrypted blob.
-tools/edge-model/source/*.tflite
-packages/openchs-android/android/app/src/tanuh/assets/models/*.bin
-packages/openchs-android/android/app/src/tanuh/assets/models/registry.json
+# on the partner's developer machine. Never committed: contains AES key + encrypted blob,
+# plus any plaintext model dropped into source/.
+tools/edge-model/source/*
+!tools/edge-model/source/.gitkeep
+packages/openchs-android/android/app/src/tanuh/assets/models/*
+!packages/openchs-android/android/app/src/tanuh/assets/models/.gitkeep
 
 # TANUH release keystore — never committed.
 tanuh-release-key.keystore

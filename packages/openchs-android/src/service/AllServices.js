@@ -125,7 +125,7 @@ import './KeycloakAuthService';
 import './StubbedAuthService';
 import './BaseAuthProviderService';
 
-// Edge model (on-device TFLite inference)
+// Edge model (on-device PyTorch Mobile inference; engine selected per-model via registry)
 import './EdgeModelService';
 
 // Other services

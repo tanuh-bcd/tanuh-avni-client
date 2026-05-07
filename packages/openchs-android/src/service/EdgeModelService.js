@@ -3,21 +3,28 @@ import Service from "../framework/bean/Service";
 import {NativeModules} from "react-native";
 
 /**
- * EdgeModelService — JS surface for on-device TFLite inference.
+ * EdgeModelService — JS surface for on-device inference.
  *
  * Overall design (~/.claude/plans/composed-tumbling-bachman.md):
- *   • The native module (`TFLiteModule`) is generic: a `modelKey` selects which model
- *     to use; preprocessing parameters come from a per-flavour `assets/models/registry.json`.
+ *   • The native module (`EdgeModelModule`) is generic: a `modelKey` selects which model
+ *     to use; per-model semantics (engine, preprocessor, decoder) come from a per-flavour
+ *     `assets/models/registry.json` override block.
  *   • This service caches the registry on app boot, then lazy-loads each model on first
- *     use. Once loaded the interpreter stays for the app lifetime *until* the OS evicts
+ *     use. Once loaded the engine handle stays for the app lifetime *until* the OS evicts
  *     it under memory pressure — at which point the next inference call self-heals via
  *     the native side's cached load-args.
  *   • Plain or AES-GCM-encrypted assets are both supported; the registry entry's
  *     `asset.type` field selects the load path.
  *
  * Rule usage:
- *   await params.services.edgeModelService.runInferenceOnImage('oral-cancer-v1', imagePath)
- *   await params.services.edgeModelService.runInference('oral-cancer-v1', floatArray)
+ *   const result = await params.services.edgeModelService.runInferenceOnImage(
+ *     'mvit2_fold5_2_latest_traced',
+ *     imagePath
+ *   );
+ *   // result is the configured decoder's structured output, e.g.
+ *   //   sigmoid-binary  → { label: "Positive"|"Negative", confidence, logit, threshold, raw }
+ *   //   argmax-labels   → { label, confidence, classIndex, raw }
+ *   //   raw-floats      → { raw, shape }
  */
 @Service("edgeModelService")
 class EdgeModelService extends BaseService {
@@ -36,7 +43,7 @@ class EdgeModelService extends BaseService {
      * doesn't break the rest of the app.
      */
     init() {
-        this._registryReady = NativeModules.TFLiteModule.getRegistry()
+        this._registryReady = NativeModules.EdgeModelModule.getRegistry()
             .then(parsed => { this._registry = parsed; })
             .catch(e => {
                 console.error('EdgeModelService: failed to load assets/models/registry.json', e);
@@ -44,26 +51,31 @@ class EdgeModelService extends BaseService {
             });
     }
 
-    async runInference(modelKey, inputData) {
+    /**
+     * Run inference on a caller-supplied flat number[]. `shape` is optional; if absent
+     * the engine treats the input as a 1-D vector. Returns the configured decoder's
+     * structured map.
+     */
+    async runInference(modelKey, inputData, shape) {
         await this._ensureLoaded(modelKey);
-        return NativeModules.TFLiteModule.runInference(modelKey, inputData);
+        return NativeModules.EdgeModelModule.runInference(modelKey, inputData, shape || null);
     }
 
     /**
      * Run inference on an image file path. Native handles decode → resize → normalise →
-     * layout-transpose, all driven by the resolved ModelContract. `imagePath` is an
+     * layout-transpose, all driven by the resolved preprocessor plugin. `imagePath` is an
      * absolute path on the device (e.g. from react-native-image-picker, with `file://`
      * stripped).
      */
     async runInferenceOnImage(modelKey, imagePath) {
         await this._ensureLoaded(modelKey);
-        return NativeModules.TFLiteModule.runInferenceOnImage(modelKey, imagePath);
+        return NativeModules.EdgeModelModule.runInferenceOnImage(modelKey, imagePath);
     }
 
     /**
-     * Lazy-load the interpreter for `modelKey` exactly once per app lifetime. Idempotent:
-     * if the native side has evicted the interpreter under memory pressure it self-heals
-     * via its cached load-args, so we don't re-issue the load call here.
+     * Lazy-load the engine handle for `modelKey` exactly once per app lifetime. Idempotent:
+     * if the native side has evicted the handle under memory pressure it self-heals via
+     * its cached load-args, so we don't re-issue the load call here.
      */
     async _ensureLoaded(modelKey) {
         await this._registryReady;
@@ -76,7 +88,7 @@ class EdgeModelService extends BaseService {
         const overrideJson = entry.override ? JSON.stringify(entry.override) : null;
 
         if (entry.asset?.type === 'encrypted') {
-            await NativeModules.TFLiteModule.loadEncryptedModel(
+            await NativeModules.EdgeModelModule.loadEncryptedModel(
                 modelKey,
                 entry.asset.path,
                 entry.asset.encryptionKey,
@@ -84,7 +96,7 @@ class EdgeModelService extends BaseService {
                 overrideJson
             );
         } else {
-            await NativeModules.TFLiteModule.loadModel(
+            await NativeModules.EdgeModelModule.loadModel(
                 modelKey,
                 entry.asset.path,
                 overrideJson
