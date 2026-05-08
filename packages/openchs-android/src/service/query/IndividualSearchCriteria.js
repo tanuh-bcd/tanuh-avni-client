@@ -53,6 +53,11 @@ class IndividualSearchCriteria {
             criteria.push("( " + subjectQuery + " )");
         }
 
+        if (!_.isEmpty(this.excludedSubjectUUIDs)) {
+            const excludedQuery = _.map(this.excludedSubjectUUIDs, subjectUUID => `uuid != "${subjectUUID}"`).join(" AND ");
+            criteria.push("( " + excludedQuery + " )");
+        }
+
         if (!_.isEmpty(this.genders)) {
             const genderQuery = _.map(this.genders, gender => `gender.name = "${gender.name}"`).join(" OR ");
             criteria.push("( " + genderQuery + " )");
@@ -97,6 +102,10 @@ class IndividualSearchCriteria {
         this.allowedSubjectUUIDs = subjectUUIDs;
     }
 
+    addExcludedSubjectUUIDsCriteria(subjectUUIDs) {
+        this.excludedSubjectUUIDs = subjectUUIDs;
+    }
+
     toggleLowestAddresses(lowestAddresses) {
         this.lowestAddressLevels = lowestAddresses;
     }
@@ -124,6 +133,7 @@ class IndividualSearchCriteria {
         individualSearchCriteria.includeVoided = this.includeVoided;
         individualSearchCriteria.subjectType = this.subjectType;
         individualSearchCriteria.allowedSubjectUUIDs = this.allowedSubjectUUIDs;
+        individualSearchCriteria.excludedSubjectUUIDs = this.excludedSubjectUUIDs;
         individualSearchCriteria.genders = this.genders;
         individualSearchCriteria.selectedCustomFilters = this.selectedCustomFilters;
         return individualSearchCriteria;

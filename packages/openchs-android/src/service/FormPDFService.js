@@ -64,10 +64,8 @@ const PDF_STYLES = `
     table.obs td { border-bottom: 0.5pt solid #e0e0e0; padding: 6pt 8pt; vertical-align: top; overflow-wrap: break-word; word-wrap: break-word; word-break: break-word; }
     table.obs td.label { width: 45%; color: #666; font-weight: 400; }
     table.obs td.value { color: #111; font-weight: 500; white-space: pre-wrap; }
-    table.obs tr.qg td.label { background: #f5f5f5; font-weight: 600; color: #222; }
-    .qg-row { padding: 2pt 0 2pt 8pt; overflow-wrap: break-word; word-wrap: break-word; }
-    .qg-label { color: #555; font-weight: 500; }
-    .qg-value { white-space: pre-wrap; }
+    table.obs tr.qg-header td.label { background: #f5f5f5; font-weight: 600; color: #222; }
+    table.obs tr.qg-separator td { padding: 0; height: 6pt; border-bottom: 0.5pt dashed #d0d0d0; }
     .footer-inner { padding: 6pt 14mm 0 14mm; border-top: 0.5pt solid #ccc; font-size: 9pt; color: #888; text-align: center; overflow-wrap: break-word; word-wrap: break-word; }
 </style>`;
 
@@ -106,34 +104,54 @@ class FormPDFService extends BaseService {
         }
     }
 
-    _renderQuestionGroupHtml(observation) {
-        try {
-            const innerShareable = this._filterShareableObservations(observation.getValueWrapper().getValue());
-            if (_.isEmpty(innerShareable)) return "";
-            return innerShareable.map(o => {
-                const label = escapeHtml(this.I18n.t(o.concept.name));
-                const value = o.concept.isQuestionGroup()
-                    ? this._renderQuestionGroupHtml(o)
-                    : escapeHtml(this._getObservationDisplayText(o));
-                return `<div class="qg-row"><span class="qg-label">${label}:</span> <span class="qg-value">${value}</span></div>`;
-            }).join("");
-        } catch (e) {
-            General.logError("FormPDFService", `Failed to render question group ${observation?.concept?.name}: ${e.message}`);
-            ErrorUtil.notifyBugsnag(e, "FormPDFService");
-            return "";
-        }
-    }
-
     _buildObservationRow(o) {
         const label = escapeHtml(this.I18n.t(o.concept.name));
         const value = escapeHtml(this._getObservationDisplayText(o)) || "—";
         return `<tr><td class="label">${label}</td><td class="value">${value}</td></tr>`;
     }
 
+    // Renders inner observations of a question group as ordinary <tr> rows so they
+    // visually match top-level observation rows (label cell + value cell, with a small
+    // left indent to indicate nesting). Recurses into nested question groups.
+    _buildQuestionGroupInnerRows(innerObservations) {
+        const shareable = this._filterShareableObservations(innerObservations);
+        if (_.isEmpty(shareable)) return "";
+        return shareable.map(o => {
+            if (o.concept.isQuestionGroup()) {
+                return this._buildQuestionGroupRows(o);
+            }
+            const label = escapeHtml(this.I18n.t(o.concept.name));
+            const value = escapeHtml(this._getObservationDisplayText(o)) || "—";
+            return `<tr><td class="label">${label}</td><td class="value">${value}</td></tr>`;
+        }).join("");
+    }
+
     _buildQuestionGroupRows(o) {
-        const label = escapeHtml(this.I18n.t(o.concept.name));
-        return `<tr class="qg"><td class="label" colspan="2">${label}</td></tr>
-                <tr class="qg-body"><td class="value" colspan="2">${this._renderQuestionGroupHtml(o)}</td></tr>`;
+        try {
+            const label = escapeHtml(this.I18n.t(o.concept.name));
+            const headerRow = `<tr class="qg-header"><td class="label" colspan="2">${label}</td></tr>`;
+
+            const valueWrapper = o.getValueWrapper();
+            const isRepeatable = valueWrapper && _.isFunction(valueWrapper.isRepeatable) && valueWrapper.isRepeatable();
+
+            if (isRepeatable) {
+                // valueWrapper.getValue() → array of QuestionGroup instances, each with its own .getValue() = inner observations.
+                const repetitions = valueWrapper.getValue() || [];
+                const blocks = repetitions
+                    .map(qg => this._buildQuestionGroupInnerRows(qg.getValue ? qg.getValue() : []))
+                    .filter(html => !_.isEmpty(html));
+                if (_.isEmpty(blocks)) return headerRow;
+                const separator = `<tr class="qg-separator"><td colspan="2"></td></tr>`;
+                return headerRow + blocks.join(separator);
+            }
+
+            // Non-repeatable: getValue() returns inner observations directly.
+            return headerRow + this._buildQuestionGroupInnerRows(valueWrapper ? valueWrapper.getValue() : []);
+        } catch (e) {
+            General.logError("FormPDFService", `Failed to render question group ${o?.concept?.name}: ${e.message}`);
+            ErrorUtil.notifyBugsnag(e, "FormPDFService");
+            return "";
+        }
     }
 
     _buildRowsFor(observations) {

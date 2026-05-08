@@ -23,19 +23,21 @@ class SubjectFormElement extends AbstractFormElement {
     }
 
     getSubjectOptions() {
-        const answersToShow = this.props.element.answersToShow;
+        const {answersToShow, answersToExclude} = this.props.element;
         const subjectOptions = [];
         if (!_.isEmpty(answersToShow)) {
             answersToShow.map(uuid => {
+                if (_.includes(answersToExclude, uuid)) return;
                 const subject = this.individualService.findByUUID(uuid);
                 if (subject != null && this.individualService.unVoided(subject)) {
                     subjectOptions.push(subject);
                 }
             });
             return _.sortBy(subjectOptions, ['nameString']);
-        } else {
-            return this.individualService.getAllBySubjectTypeUUID(this.subjectTypeUUID());
         }
+        const allSubjects = this.individualService.getAllBySubjectTypeUUID(this.subjectTypeUUID());
+        if (_.isEmpty(answersToExclude)) return allSubjects;
+        return _.filter(allSubjects, subject => !_.includes(answersToExclude, subject.uuid));
     }
 
     renderSearchIcon() {
@@ -69,6 +71,7 @@ class SubjectFormElement extends AbstractFormElement {
                     hideBackButton: false,
                     memberSubjectType: subjectType,
                     allowedSubjectUUIDs: this.props.element.answersToShow,
+                    excludedSubjectUUIDs: this.props.element.answersToExclude,
                     onIndividualSelection: (source, individual) => {
                         TypedTransition.from(source).popToBookmark();
                         this.dispatchAction(this.props.actionName, {

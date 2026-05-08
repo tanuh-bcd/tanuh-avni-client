@@ -96,6 +96,48 @@ describe('IndividualServiceTest', () => {
             const results = individualService.search(individualSearchCriteria).results;
             assert.lengthOf(results, 1);
         });
+
+        describe("subject answer filters", () => {
+            const registerIndividuals = (count) => {
+                const individuals = [];
+                for (let i = 0; i < count; i++) {
+                    const individual = createIndividual(false);
+                    individualService.register(individual);
+                    individuals.push(individual);
+                }
+                return individuals;
+            };
+
+            it("returns only allowed subjects when answersToShow UUIDs are set", () => {
+                const [indi1, indi2] = registerIndividuals(5);
+
+                const criteria = IndividualSearchCriteria.empty();
+                criteria.addAllowedSubjectUUIDsCriteria([indi1.uuid, indi2.uuid]);
+
+                const results = individualService.search(criteria).results;
+                const resultUUIDs = results.map(({uuid}) => uuid);
+                assert.lengthOf(results, 2);
+                assert.includeMembers(resultUUIDs, [indi1.uuid, indi2.uuid]);
+            });
+
+            it("excludes subjects whose UUIDs are in answersToExclude", () => {
+                const [indi1, indi2] = registerIndividuals(5);
+
+                const criteria = IndividualSearchCriteria.empty();
+                criteria.addExcludedSubjectUUIDsCriteria([indi1.uuid, indi2.uuid]);
+
+                const results = individualService.search(criteria).results;
+                const resultUUIDs = results.map(({uuid}) => uuid);
+                assert.lengthOf(results, 3);
+                assert.notInclude(resultUUIDs, indi1.uuid);
+                assert.notInclude(resultUUIDs, indi2.uuid);
+            });
+
+            // Combining allowed and excluded UUIDs on the same search is an
+            // unreachable state — the rule layer (FormElementStatusBuilder.build
+            // and FormElementStatus constructor) guards against simultaneous
+            // showAnswers + skipAnswers — so it's not exercised here.
+        });
     });
 
     describe("count", () => {

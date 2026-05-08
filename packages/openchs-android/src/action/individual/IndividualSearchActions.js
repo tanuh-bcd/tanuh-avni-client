@@ -58,6 +58,10 @@ export class IndividualSearchActions {
             newState.searchCriteria.addAllowedSubjectUUIDsCriteria(action.allowedSubjectUUIDs);
             newState.allowedSubjectUUIDs = action.allowedSubjectUUIDs;
         }
+        if (action.excludedSubjectUUIDs && action.excludedSubjectUUIDs.length > 0) {
+            newState.searchCriteria.addExcludedSubjectUUIDsCriteria(action.excludedSubjectUUIDs);
+            newState.excludedSubjectUUIDs = action.excludedSubjectUUIDs;
+        }
         return {...newState, loading: false};
     }
 
@@ -159,7 +163,7 @@ export class IndividualSearchActions {
     };
 
     static getSearchFilterTypes(state, selectedCustomFilterForSubjectType) {
-        const propertiesToRemove = ['includeVoided', 'subjectType', 'allowedSubjectUUIDs', 'selectedCustomFilters'];
+        const propertiesToRemove = ['includeVoided', 'subjectType', 'allowedSubjectUUIDs', 'excludedSubjectUUIDs', 'selectedCustomFilters'];
         const allFilters = {..._.omit(state.searchCriteria, propertiesToRemove), ...selectedCustomFilterForSubjectType};
         return _.chain(allFilters)
             .pickBy((v, k) => !_.isEmpty(v))
