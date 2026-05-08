@@ -3,7 +3,7 @@
  *
  * Verifies the registry-driven, lazy-load-once design described in the plan
  * (~/.claude/plans/composed-tumbling-bachman.md):
- *   • init() reads the registry once via TFLiteModule.getRegistry; the Promise is awaited
+ *   • init() reads the registry once via EdgeModelModule.getRegistry; the Promise is awaited
  *     by any subsequent inference call.
  *   • Each modelKey is loaded exactly once per app lifetime (no double load).
  *   • Plain vs encrypted asset types route to loadModel vs loadEncryptedModel.
@@ -42,7 +42,7 @@ const buildRegistry = (override) => ({
 
 jest.mock('react-native', () => ({
     NativeModules: {
-        TFLiteModule: {
+        EdgeModelModule: {
             getRegistry: jest.fn(),
             loadModel: jest.fn(() => Promise.resolve(true)),
             loadEncryptedModel: jest.fn(() => Promise.resolve(true)),
@@ -63,21 +63,21 @@ describe('EdgeModelService', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        NativeModules.TFLiteModule.getRegistry.mockResolvedValue(buildRegistry());
+        NativeModules.EdgeModelModule.getRegistry.mockResolvedValue(buildRegistry());
         service = new EdgeModelService(null, null);
         service.init();
     });
 
-    it('reads the registry once at init via TFLiteModule.getRegistry', async () => {
+    it('reads the registry once at init via EdgeModelModule.getRegistry', async () => {
         await service._registryReady;
-        expect(NativeModules.TFLiteModule.getRegistry).toHaveBeenCalledTimes(1);
+        expect(NativeModules.EdgeModelModule.getRegistry).toHaveBeenCalledTimes(1);
     });
 
     it('loads a plain model on first inference call and routes via loadModel', async () => {
         await service.runInference('oral-cancer-v1', [1.0, 2.0]);
 
-        expect(NativeModules.TFLiteModule.loadModel).toHaveBeenCalledTimes(1);
-        const [modelKey, assetPath, overrideJson] = NativeModules.TFLiteModule.loadModel.mock.calls[0];
+        expect(NativeModules.EdgeModelModule.loadModel).toHaveBeenCalledTimes(1);
+        const [modelKey, assetPath, overrideJson] = NativeModules.EdgeModelModule.loadModel.mock.calls[0];
         expect(modelKey).toBe('oral-cancer-v1');
         expect(assetPath).toBe('models/oral-cancer-v1.tflite');
         expect(JSON.parse(overrideJson).input.width).toBe(224);
@@ -88,15 +88,15 @@ describe('EdgeModelService', () => {
         await service.runInference('oral-cancer-v1', [2.0]);
         await service.runInferenceOnImage('oral-cancer-v1', '/tmp/x.jpg');
 
-        expect(NativeModules.TFLiteModule.loadModel).toHaveBeenCalledTimes(1);
+        expect(NativeModules.EdgeModelModule.loadModel).toHaveBeenCalledTimes(1);
     });
 
     it('routes encrypted asset entries to loadEncryptedModel with key and sha256', async () => {
         await service.runInference('encrypted-model', [1.0]);
 
-        expect(NativeModules.TFLiteModule.loadEncryptedModel).toHaveBeenCalledTimes(1);
-        expect(NativeModules.TFLiteModule.loadModel).not.toHaveBeenCalled();
-        const [modelKey, path, key, sha, override] = NativeModules.TFLiteModule.loadEncryptedModel.mock.calls[0];
+        expect(NativeModules.EdgeModelModule.loadEncryptedModel).toHaveBeenCalledTimes(1);
+        expect(NativeModules.EdgeModelModule.loadModel).not.toHaveBeenCalled();
+        const [modelKey, path, key, sha, override] = NativeModules.EdgeModelModule.loadEncryptedModel.mock.calls[0];
         expect(modelKey).toBe('encrypted-model');
         expect(path).toBe('models/encrypted-model.bin');
         expect(key).toBe('YmFzZTY0a2V5');
@@ -107,7 +107,7 @@ describe('EdgeModelService', () => {
     it('forwards inputData and modelKey to runInference correctly', async () => {
         await service.runInference('oral-cancer-v1', [1.0, 2.0]);
 
-        expect(NativeModules.TFLiteModule.runInference).toHaveBeenCalledWith('oral-cancer-v1', [1.0, 2.0]);
+        expect(NativeModules.EdgeModelModule.runInference).toHaveBeenCalledWith('oral-cancer-v1', [1.0, 2.0], null);
     });
 
     it('returns the output array from the native module', async () => {
@@ -122,7 +122,7 @@ describe('EdgeModelService', () => {
     });
 
     it('propagates load errors from the native module', async () => {
-        NativeModules.TFLiteModule.loadModel.mockRejectedValueOnce(
+        NativeModules.EdgeModelModule.loadModel.mockRejectedValueOnce(
             new Error('TFLITE_LOAD_ERROR: model file not found')
         );
 
@@ -131,7 +131,7 @@ describe('EdgeModelService', () => {
 
     it('propagates inference errors from the native module', async () => {
         await service.runInference('oral-cancer-v1', [1.0]);  // load first
-        NativeModules.TFLiteModule.runInference.mockRejectedValueOnce(
+        NativeModules.EdgeModelModule.runInference.mockRejectedValueOnce(
             new Error('TFLITE_INFERENCE_ERROR: shape mismatch')
         );
 
@@ -139,7 +139,7 @@ describe('EdgeModelService', () => {
     });
 
     it('surfaces registry load failure on first inference call (not at init)', async () => {
-        NativeModules.TFLiteModule.getRegistry.mockRejectedValueOnce(new Error('asset not found'));
+        NativeModules.EdgeModelModule.getRegistry.mockRejectedValueOnce(new Error('asset not found'));
         const failingService = new EdgeModelService(null, null);
         failingService.init();
 
