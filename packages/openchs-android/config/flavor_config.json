@@ -60,8 +60,8 @@
     "package_name": "org.tanuh.openchsclient",
     "prod_admin_password_env_var_name": "OPENCHS_PROD_ADMIN_PASSWORD",
     "bugsnag": {
-      "project_name": "avni-client",
-      "env_var_name": "OPENCHS_CLIENT_BUGSNAG_API_KEY"
+      "project_name": "tanuh-avni-client",
+      "env_var_name": "TANUH_BUGSNAG_API_KEY"
     }
   }
 }

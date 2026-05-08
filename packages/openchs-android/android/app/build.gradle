@@ -230,7 +230,11 @@ android {
             applicationId "org.tanuh.openchsclient"
             resValue "string", "app_name", "TANUH"
             signingConfig signingConfigs.tanuh
-            manifestPlaceholders = [bugsnagAPIKey: System.getenv("OPENCHS_CLIENT_BUGSNAG_API_KEY") ?: "dummy"]
+            // Dedicated Bugsnag project: tanuh-avni-client. Hardcoded because Bugsnag API
+            // keys are project identifiers (similar to Sentry DSNs), not auth secrets — they
+            // permit error submission to a single project, no read access to existing data.
+            // Override via TANUH_BUGSNAG_API_KEY env var if a separate dev project is set up.
+            manifestPlaceholders = [bugsnagAPIKey: System.getenv("TANUH_BUGSNAG_API_KEY") ?: "00d2fd4987b9f63c0046fff5c3a88bfb"]
         }
     }
     namespace 'com.openchsclient'
