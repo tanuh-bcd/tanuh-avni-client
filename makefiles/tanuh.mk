@@ -81,6 +81,57 @@ tanuh-clean: ## Remove the per-build encrypted blob and registry.json.
 	rm -f $(TANUH_OUT_DIR)/*.bin $(TANUH_OUT_DIR)/registry.json
 	@echo "Cleared $(TANUH_OUT_DIR)/"
 
+# ── Play Store / universal-APK pipeline ─────────────────────────────────────────────
+# Mirrors what CircleCI's release_android_live job (.circleci/config.yml) produces for
+# other flavours: a signed AAB for the Play Store and a signed universal APK derived
+# from that AAB via bundletool. The per-arch APK pipeline is `make tanuh-apk`; this is
+# the bundle path that exercises the AAB toolchain end-to-end.
+#
+# Both targets honour `versionCode` / `versionName` env vars. build.gradle:63-67 reads
+# them from the environment; without them, versionCode defaults to 1 (real value
+# 8388609 after the 8*1048576 base offset) and versionName defaults to "1".
+
+BUNDLETOOL_VERSION ?= 1.15.1
+BUNDLETOOL_JAR     := bundletool.jar
+BUNDLETOOL_URL     := https://github.com/google/bundletool/releases/download/$(BUNDLETOOL_VERSION)/bundletool-all-$(BUNDLETOOL_VERSION).jar
+TANUH_AAB          := packages/openchs-android/android/app/build/outputs/bundle/tanuhRelease/app-tanuh-release.aab
+TANUH_UNIVERSAL    := tanuh-universal.apks
+
+tanuh-aab: tanuh-encrypt ## Build signed tanuh release AAB. Pass versionCode=N versionName=X to set them.
+	@if [ ! -f "$(TANUH_KEYSTORE)" ]; then \
+		echo "ERROR: $(TANUH_KEYSTORE) not found. Run 'make tanuh-setup' first."; \
+		exit 1; \
+	fi
+	@if [ -z "$$tanuh_KEYSTORE_PASSWORD" ] || [ -z "$$tanuh_KEY_ALIAS" ]; then \
+		echo "ERROR: signing env vars not set. Export tanuh_KEYSTORE_PASSWORD and tanuh_KEY_ALIAS."; \
+		exit 1; \
+	fi
+	$(MAKE) as_prod flavor=tanuh
+	$(MAKE) metro_config flavor=tanuh
+	cd packages/openchs-android/android; KEY_STORE_PREFIX="$(CURDIR)/" GRADLE_OPTS="$(if $(GRADLE_OPTS),$(GRADLE_OPTS),-Xmx1024m -Xms1024m)" ./gradlew bundleTanuhRelease --stacktrace
+	@echo ""
+	@echo "Signed AAB: $(TANUH_AAB)"
+	@echo "  versionCode env=$${versionCode:-<unset, defaults to 1>}  versionName env=$${versionName:-<unset, defaults to 1>}"
+
+tanuh-universal-apk: tanuh-aab ## Build signed AAB + signed universal APK via bundletool.
+	@if [ ! -f "$(BUNDLETOOL_JAR)" ]; then \
+		echo "Downloading bundletool $(BUNDLETOOL_VERSION)..."; \
+		curl -fSL -o $(BUNDLETOOL_JAR) $(BUNDLETOOL_URL); \
+	fi
+	rm -f $(TANUH_UNIVERSAL)
+	java -jar $(BUNDLETOOL_JAR) build-apks \
+		--bundle=$(TANUH_AAB) \
+		--output=$(TANUH_UNIVERSAL) \
+		--mode=universal \
+		--ks=$(TANUH_KEYSTORE) \
+		--ks-pass=pass:$$tanuh_KEYSTORE_PASSWORD \
+		--ks-key-alias=$$tanuh_KEY_ALIAS \
+		--key-pass=pass:$${tanuh_KEY_PASSWORD:-$$tanuh_KEYSTORE_PASSWORD}
+	@echo ""
+	@echo "Signed AAB:           $(TANUH_AAB)"
+	@echo "Universal apks (zip): $(TANUH_UNIVERSAL)"
+	@echo "Extract installable APK: unzip -p $(TANUH_UNIVERSAL) universal.apk > tanuh-universal.apk"
+
 # Placeholder model setup for local development without TANUH's actual .pt.
 # Downloads PyTorch's official Hello World traced MobileNetV2 (~20 MB, ImageNet 224x224 RGB,
 # 1000-class output) and encrypts it under TANUH_MODEL_KEY=placeholder using
@@ -131,4 +182,4 @@ run_app_tanuh_dev: ## Install + launch tanuh debug build, prod backend with dev 
 run-app-tanuh: run_app_tanuh
 run-app-tanuh-dev: run_app_tanuh_dev
 
-.PHONY: tanuh-setup tanuh-encrypt tanuh-apk tanuh-clean tanuh-placeholder run_app_tanuh run_app_tanuh_dev run-app-tanuh run-app-tanuh-dev
+.PHONY: tanuh-setup tanuh-encrypt tanuh-apk tanuh-aab tanuh-universal-apk tanuh-clean tanuh-placeholder run_app_tanuh run_app_tanuh_dev run-app-tanuh run-app-tanuh-dev

@@ -110,3 +110,8 @@ packages/openchs-android/android/app/src/tanuh/assets/models/*
 
 # TANUH release keystore — never committed.
 tanuh-release-key.keystore
+
+# bundletool jar + bundletool output, downloaded/produced by `make tanuh-universal-apk`.
+bundletool.jar
+tanuh-universal.apks
+tanuh-universal.apk
