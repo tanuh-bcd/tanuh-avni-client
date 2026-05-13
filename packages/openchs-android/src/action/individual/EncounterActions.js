@@ -16,6 +16,7 @@ import {DraftEncounter, ObservationsHolder} from "openchs-models";
 import DraftEncounterService from '../../service/draft/DraftEncounterService';
 import DraftConfigService from "../../service/DraftConfigService";
 import {dispatchHandleNext} from "../common/DispatchHelpers";
+import {EDGE_MODEL_ACTION} from "../../service/EdgeModelService";
 
 function getPreviousEncounter(action, form, context) {
     const previousEncounter = action.encounter.individual.findLastEncounterOfType(action.encounter, [action.encounter.encounterType.name]);
@@ -221,6 +222,7 @@ const individualEncounterViewActionsMap = new Map([
     [individualEncounterViewActions.ON_SKIP_VERIFICATION, PhoneNumberVerificationActions.onSkipVerification],
     [individualEncounterViewActions.ON_TIMED_FORM, TimerActions.onTimedForm],
     [individualEncounterViewActions.ON_START_TIMER, TimerActions.onStartTimer],
+    [EDGE_MODEL_ACTION.INFERENCE_RESULT_AVAILABLE, ObservationsHolderActions.onInferenceResultAvailable],
 ]);
 
 export {

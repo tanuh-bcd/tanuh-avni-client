@@ -145,4 +145,97 @@ describe('EdgeModelService', () => {
 
         await expect(failingService.runInference('oral-cancer-v1', [1.0])).rejects.toThrow('asset not found');
     });
+
+    describe('scheduleImageInference', () => {
+        const fakeEntity = (uuid, existingValue) => ({
+            uuid,
+            getObservationValue: jest.fn(() => existingValue),
+        });
+
+        beforeEach(() => {
+            NativeModules.EdgeModelModule.runInferenceOnImage.mockResolvedValue({label: 'Positive', confidence: 0.91});
+            service.dispatchAction = jest.fn();
+        });
+
+        it('dispatches INFERENCE_RESULT_AVAILABLE with the decoder label on resolve', async () => {
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', fakeEntity('e1'), 'AI Suspicion Result');
+            await new Promise(r => setImmediate(r));
+
+            expect(NativeModules.EdgeModelModule.runInferenceOnImage).toHaveBeenCalledTimes(1);
+            expect(service.dispatchAction).toHaveBeenCalledWith(
+                'EDGE_MODEL.INFERENCE_RESULT_AVAILABLE',
+                {conceptName: 'AI Suspicion Result', value: 'Positive'}
+            );
+        });
+
+        it('applies labelMap before dispatching so the obs holds the user-facing string', async () => {
+            service.scheduleImageInference(
+                'oral-cancer-v1', '/tmp/x.jpg', fakeEntity('e1'), 'AI Suspicion Result',
+                {'Positive': 'Suspicious', 'Negative': 'Non Suspicious'}
+            );
+            await new Promise(r => setImmediate(r));
+
+            expect(service.dispatchAction).toHaveBeenCalledWith(
+                'EDGE_MODEL.INFERENCE_RESULT_AVAILABLE',
+                {conceptName: 'AI Suspicion Result', value: 'Suspicious'}
+            );
+        });
+
+        it('falls back to the raw label when labelMap has no entry for it', async () => {
+            service.scheduleImageInference(
+                'oral-cancer-v1', '/tmp/x.jpg', fakeEntity('e1'), 'AI Suspicion Result',
+                {'Negative': 'Non Suspicious'}  // no entry for "Positive"
+            );
+            await new Promise(r => setImmediate(r));
+
+            expect(service.dispatchAction).toHaveBeenCalledWith(
+                'EDGE_MODEL.INFERENCE_RESULT_AVAILABLE',
+                {conceptName: 'AI Suspicion Result', value: 'Positive'}
+            );
+        });
+
+        it('dedups repeated calls for the same (entity, modelKey, imagePath) while in flight', async () => {
+            let resolveFn;
+            NativeModules.EdgeModelModule.runInferenceOnImage.mockReturnValueOnce(new Promise(r => { resolveFn = r; }));
+            const entity = fakeEntity('e1');
+
+            // Three schedule calls back-to-back — second and third should hit the dedup guard
+            // (which checks _scheduled synchronously before delegating to runInferenceOnImage).
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+
+            // Let the first scheduling's _ensureLoaded chain flush so native runInferenceOnImage is invoked.
+            await new Promise(r => setImmediate(r));
+            expect(NativeModules.EdgeModelModule.runInferenceOnImage).toHaveBeenCalledTimes(1);
+
+            resolveFn({label: 'Positive'});
+            await new Promise(r => setImmediate(r));
+            expect(service.dispatchAction).toHaveBeenCalledTimes(1);
+        });
+
+        it('skips scheduling when the entity already has the target observation', () => {
+            const entity = fakeEntity('e1', 'Suspicious');
+
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+
+            expect(NativeModules.EdgeModelModule.runInferenceOnImage).not.toHaveBeenCalled();
+            expect(service.dispatchAction).not.toHaveBeenCalled();
+        });
+
+        it('swallows native errors without dispatching and releases the dedup slot', async () => {
+            NativeModules.EdgeModelModule.runInferenceOnImage.mockRejectedValueOnce(new Error('TFLITE_INFERENCE_ERROR'));
+            const entity = fakeEntity('e1');
+
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+            await new Promise(r => setImmediate(r));
+
+            expect(service.dispatchAction).not.toHaveBeenCalled();
+
+            // After the failure, the slot is free — a retry should fire a new inference call.
+            service.scheduleImageInference('oral-cancer-v1', '/tmp/x.jpg', entity, 'AI Suspicion Result');
+            await new Promise(r => setImmediate(r));
+            expect(NativeModules.EdgeModelModule.runInferenceOnImage).toHaveBeenCalledTimes(2);
+        });
+    });
 });
