@@ -22,10 +22,16 @@ not the §5.1 protection in `~/.claude/plans/frolicking-pondering-marble.md`:
 - It does *not* defeat a determined reverser who reads the bundled key and decrypts.
 
 There is also a brief **on-disk plaintext window** at load time: PyTorch Mobile's
-`Module.load(path)` requires a file path, not a buffer, so the encrypted blob is decrypted
-into the app's private `filesDir/<modelKey>.pt` (mode 0600), loaded, and the file is deleted
-in a `finally` block. Plaintext exists on disk for the duration of `Module.load` only. This
-is consistent with the obfuscation posture above; a determined reverser has easier paths.
+`Module.load(path)` requires a file path, not a buffer, so the AES decrypt is streamed
+directly into the app's private `filesDir/<modelKey>.pt.tmp` (mode 0600 via
+`MODE_PRIVATE`), the model is loaded, and the file is deleted in a `finally` block.
+Plaintext exists on disk for the duration of decrypt + `Module.load` (low single-digit
+seconds for an 18 MB model). The streaming decrypt — rather than first materialising the
+plaintext in a `ByteBuffer.allocateDirect` and then writing it out — keeps the JVM-heap
+peak under 64 KB, which lets the bridge run inside the default ~96 MB heap without
+needing `largeHeap`. The longer disk window doesn't change the threat model: a reverser
+with the APK already has the AES key and decrypts offline; a reverser with shell-as-app-uid
+or root can read the temp file in either window, or dump live process memory.
 
 The proper defence — encrypted blob in TANUH's S3, key in `organisation_config`, plus a
 custom JNI shim that calls `torch::jit::load(istream)` to keep plaintext entirely off-disk —

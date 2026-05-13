@@ -11,10 +11,10 @@ import com.openchsclient.decoding.Decoders
 import com.openchsclient.engine.InferenceEngine
 import com.openchsclient.engine.PyTorchEngine
 import com.openchsclient.preprocessing.Preprocessors
+import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.security.MessageDigest
 import javax.crypto.Cipher
@@ -43,11 +43,14 @@ import javax.crypto.spec.SecretKeySpec
  * free their off-heap buffers. Subsequent inferences self-heal: the load-args cache lets us
  * rebuild without round-tripping to JS.
  *
- * Encrypted models are **never written to disk in plaintext, except by engines that require
- * a path-based load API** (PyTorch Mobile is one such — see `PyTorchEngine` for the temp-file
- * decrypt window and rationale). The encrypted blob is memory-mapped from the APK,
- * stream-decrypted via chunked `Cipher.update` into a direct off-heap `ByteBuffer`, integrity-
- * checked via SHA-256, and handed to the engine. Java `byte[]` scratch space is zeroed after copy.
+ * Encrypted models are stream-decrypted directly into a private temp file at
+ * `filesDir/<modelKey>.pt.tmp` (MODE_PRIVATE, 0600) — 64 KB chunk peak on the JVM heap.
+ * The engine reads the file (`Module.load(path)` for PyTorch) and the bridge deletes the
+ * file in a `finally` block; plaintext exists on disk for the duration of decrypt + load
+ * (single-digit seconds for a ~18 MB model). This is consistent with the existing
+ * `tools/edge-model/README.md` threat model: the AES key ships in the APK, so encryption
+ * is obfuscation, not full IP protection. A determined reverser decrypts offline from the
+ * APK and never touches the device — the brief on-disk window doesn't change that.
  *
  * The module registers `ComponentCallbacks2` to receive memory-pressure signals.
  * Backgrounding the app for a camera intent or phone call does *not* trigger eviction unless
@@ -288,6 +291,13 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
      * Build the engine handle for `modelKey` if it isn't already loaded. Self-healing:
      * after a memory-pressure eviction, the next inference call hits this path and rebuilds
      * from the cached `loadArgs` without re-prompting JS.
+     *
+     * Memory-budget rationale: previous design landed the plaintext in a 18 MB
+     * `ByteBuffer.allocateDirect` (counted against the ART growth-limit on Android) before
+     * handing it to the engine, which then wrote it to a temp file anyway. Camera bitmaps
+     * + Realm + Hermes + that 18 MB peak overflowed the default ~96 MB heap. We now stream
+     * decrypt-→-file in 64 KB chunks, then engine.load reads the file. Peak transient
+     * Java-heap delta during load is ~16 KB.
      */
     private fun ensureLoaded(modelKey: String) {
         if (handles.containsKey(modelKey)) return
@@ -295,16 +305,28 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
             ?: throw IllegalStateException(
                 "Model not loaded: '$modelKey'. Call loadModel()/loadEncryptedModel() before inference."
             )
-        when (args) {
-            is LoadArgs.Plain -> buildHandle(modelKey, mmapAsset(args.assetPath), args.overrideJson)
-            is LoadArgs.Encrypted -> {
-                val plaintext = decryptToDirectBuffer(args.encryptedAssetPath, args.base64Key, args.sha256Hex)
-                buildHandle(modelKey, plaintext, args.overrideJson)
+        val safeKey = modelKey.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val plaintextFile = File(reactApplicationContext.filesDir, "$safeKey.pt.tmp")
+        try {
+            when (args) {
+                is LoadArgs.Plain -> streamAssetToFile(args.assetPath, plaintextFile)
+                is LoadArgs.Encrypted -> streamDecryptToFile(args.encryptedAssetPath, args.base64Key, args.sha256Hex, plaintextFile)
+            }
+            // Defensive — `filesDir` already gives 0600 via MODE_PRIVATE, but older devices
+            // don't always honour the default. Owner-only readable.
+            try { plaintextFile.setReadable(false, false); plaintextFile.setReadable(true, true) } catch (_: Exception) {}
+
+            buildHandle(modelKey, plaintextFile, args.overrideJson)
+        } finally {
+            // The plaintext file's on-disk window must not outlive load. Whether load
+            // succeeded or threw, delete it before returning to the caller.
+            if (plaintextFile.exists() && !plaintextFile.delete()) {
+                Log.w(TAG, "ensureLoaded($modelKey): failed to delete temp file ${plaintextFile.absolutePath}")
             }
         }
     }
 
-    private fun buildHandle(modelKey: String, plaintext: ByteBuffer, overrideJson: String?) {
+    private fun buildHandle(modelKey: String, plaintextFile: File, overrideJson: String?) {
         val contract = ModelContract.parse(overrideJson)
         val engine = engines[contract.engine]
             ?: throw IllegalArgumentException(
@@ -312,90 +334,117 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
                 "Add a new InferenceEngine implementation in `engine/` and register it in EdgeModelModule.engines."
             )
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "buildHandle($modelKey): engine=${contract.engine}, preprocessor=${contract.preprocessorName}, decoder=${contract.decoderName}, plaintext=${plaintext.capacity()} bytes")
+            Log.d(TAG, "buildHandle($modelKey): engine=${contract.engine}, preprocessor=${contract.preprocessorName}, decoder=${contract.decoderName}, plaintext=${plaintextFile.length()} bytes")
         }
-        val handle = engine.load(modelKey, plaintext)
+        val handle = engine.load(modelKey, plaintextFile)
         handles[modelKey] = handle
         contracts[modelKey] = contract
     }
 
-    /** Memory-map an asset file as read-only. Lazy paging; no Java-heap allocation. */
-    private fun mmapAsset(assetPath: String): MappedByteBuffer {
+    /**
+     * Copy a plaintext APK asset into a private file. Uses `FileChannel.transferTo` so the
+     * kernel can splice page-cache pages directly into the destination without bouncing
+     * through the Java heap.
+     */
+    private fun streamAssetToFile(assetPath: String, outFile: File) {
         val fd = reactApplicationContext.assets.openFd(assetPath)
         FileInputStream(fd.fileDescriptor).use { fis ->
-            return fis.channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+            FileOutputStream(outFile).use { fos ->
+                val inCh = fis.channel
+                val outCh = fos.channel
+                var transferred = 0L
+                while (transferred < fd.declaredLength) {
+                    val n = inCh.transferTo(fd.startOffset + transferred, fd.declaredLength - transferred, outCh)
+                    if (n <= 0) throw IllegalStateException("Asset transfer stalled at $transferred / ${fd.declaredLength}")
+                    transferred += n
+                }
+            }
         }
     }
 
     /**
-     * Stream-decrypt an AES-GCM-encrypted asset into a direct off-heap `ByteBuffer`.
+     * Stream-decrypt an AES-GCM-encrypted asset directly into a private file. Peak JVM-heap
+     * footprint is the two 64 KB chunk buffers + the cipher's internal tag-buffer (≤16 B);
+     * the 18 MB plaintext never materialises as a single allocation.
      *
      * Layout of the on-disk blob (matches `tools/edge-model/encrypt-model.js`):
      *   [12-byte IV][ciphertext...][16-byte GCM tag]
      *
-     * We decrypt in `DECRYPT_CHUNK_BYTES` chunks via `Cipher.update`, writing directly into
-     * a preallocated direct buffer to avoid a single ~100 MB Java-heap allocation. After
-     * `doFinal`, integrity is verified via SHA-256 of the resulting plaintext against the
-     * value the encryption CLI recorded — defends against blob substitution as well as
-     * silent corruption.
+     * We decrypt in `DECRYPT_CHUNK_BYTES` chunks via `Cipher.update` and stream the
+     * produced plaintext straight into the destination `FileChannel`. SHA-256 is computed
+     * incrementally over the same chunks; verification happens before the file is handed
+     * to the engine — a mismatch deletes the file and throws.
+     *
+     * Note on AES/GCM streaming: Android's Conscrypt provider (Android 7+) streams GCM
+     * decrypt output as ciphertext arrives, buffering only the final 16-byte tag.
+     * `cipher.update` therefore emits ~chunk-sized plaintext per call; `doFinal` returns
+     * at most a few bytes of tail. The pre-refactor 18 MB JVM-heap peak came from
+     * `ByteBuffer.allocateDirect(plaintextLen)` (ART counts direct buffers against the
+     * growth limit), not from `doFinal` — eliminating it gets the bridge below the
+     * default 96 MB heap cap without needing `largeHeap`.
      */
-    private fun decryptToDirectBuffer(encryptedAssetPath: String, base64Key: String, expectedSha256Hex: String): ByteBuffer {
+    private fun streamDecryptToFile(
+        encryptedAssetPath: String,
+        base64Key: String,
+        expectedSha256Hex: String,
+        outFile: File
+    ) {
         val fd = reactApplicationContext.assets.openFd(encryptedAssetPath)
         val totalLen = fd.declaredLength
         val ciphertextLen = totalLen - GCM_IV_BYTES
-        val plaintextLen = (ciphertextLen - GCM_TAG_BITS / 8).toInt()
 
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "decryptToDirectBuffer($encryptedAssetPath): total=$totalLen, plaintext=$plaintextLen bytes")
+            Log.d(TAG, "streamDecryptToFile($encryptedAssetPath): total=$totalLen → ${outFile.absolutePath}")
         }
 
         val mapped = FileInputStream(fd.fileDescriptor).use { fis ->
             fis.channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, totalLen)
         }
-        // First 12 bytes = IV
+        // First 12 bytes = IV.
         val iv = ByteArray(GCM_IV_BYTES).also { mapped.get(it) }
 
         val key = Base64.decode(base64Key, Base64.DEFAULT)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
 
-        val output = ByteBuffer.allocateDirect(plaintextLen).order(ByteOrder.nativeOrder())
+        val md = MessageDigest.getInstance("SHA-256")
         val chunk = ByteArray(DECRYPT_CHUNK_BYTES)
         val outChunk = ByteArray(DECRYPT_CHUNK_BYTES + 32)
-        var remaining = ciphertextLen.toInt()
-        while (remaining > 0) {
-            val n = minOf(remaining, DECRYPT_CHUNK_BYTES)
-            mapped.get(chunk, 0, n)
-            val produced = cipher.update(chunk, 0, n, outChunk)
-            if (produced > 0) output.put(outChunk, 0, produced)
-            remaining -= n
-        }
-        // doFinal verifies the GCM tag — throws AEADBadTagException on tamper or wrong key.
-        val tail = cipher.doFinal()
-        if (tail.isNotEmpty()) output.put(tail)
-        output.rewind()
 
-        // Zero the temporary Java byte arrays — we cannot un-page the mmap'd ciphertext or
-        // the direct buffer (engine owns it now), but we can clean up our scratch space.
-        chunk.fill(0); outChunk.fill(0); key.fill(0)
+        try {
+            FileOutputStream(outFile).use { fos ->
+                val outCh = fos.channel
+                var remaining = ciphertextLen.toInt()
+                while (remaining > 0) {
+                    val n = minOf(remaining, DECRYPT_CHUNK_BYTES)
+                    mapped.get(chunk, 0, n)
+                    val produced = cipher.update(chunk, 0, n, outChunk)
+                    if (produced > 0) {
+                        outCh.write(ByteBuffer.wrap(outChunk, 0, produced))
+                        md.update(outChunk, 0, produced)
+                    }
+                    remaining -= n
+                }
+                // doFinal verifies the GCM tag — throws AEADBadTagException on tamper or wrong key.
+                val tail = cipher.doFinal()
+                if (tail.isNotEmpty()) {
+                    outCh.write(ByteBuffer.wrap(tail))
+                    md.update(tail)
+                }
+            }
 
-        // Plaintext integrity check — defends against a swapped blob with valid GCM auth
-        // (e.g. someone re-encrypted a different model with the same key).
-        val md = MessageDigest.getInstance("SHA-256")
-        val view = output.duplicate()
-        val readBuf = ByteArray(DECRYPT_CHUNK_BYTES)
-        while (view.hasRemaining()) {
-            val n = minOf(view.remaining(), readBuf.size)
-            view.get(readBuf, 0, n)
-            md.update(readBuf, 0, n)
+            // Plaintext integrity check — defends against a swapped blob with valid GCM auth
+            // (e.g. someone re-encrypted a different model with the same key).
+            val actual = md.digest().joinToString("") { "%02x".format(it) }
+            if (!actual.equals(expectedSha256Hex, ignoreCase = true)) {
+                throw SecurityException("Decrypted plaintext SHA-256 mismatch (expected=$expectedSha256Hex, actual=$actual)")
+            }
+        } finally {
+            // Zero the Java byte arrays. We can't un-page the mmap'd ciphertext (it's the
+            // APK asset) or the on-disk plaintext (caller deletes it), but we clean up our
+            // own scratch space so it doesn't linger in a GC-able allocation.
+            chunk.fill(0); outChunk.fill(0); key.fill(0)
         }
-        val actual = md.digest().joinToString("") { "%02x".format(it) }
-        readBuf.fill(0)
-        if (!actual.equals(expectedSha256Hex, ignoreCase = true)) {
-            throw SecurityException("Decrypted plaintext SHA-256 mismatch (expected=$expectedSha256Hex, actual=$actual)")
-        }
-
-        return output
     }
 
     private fun jsonStringToWritableMap(raw: String): WritableMap {

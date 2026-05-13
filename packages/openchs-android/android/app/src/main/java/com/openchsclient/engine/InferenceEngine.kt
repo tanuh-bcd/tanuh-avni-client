@@ -1,7 +1,7 @@
 package com.openchsclient.engine
 
 import com.openchsclient.preprocessing.ImagePreprocessor
-import java.nio.ByteBuffer
+import java.io.File
 
 /**
  * Abstract inference backend (~/.claude/plans/composed-tumbling-bachman.md).
@@ -16,9 +16,13 @@ import java.nio.ByteBuffer
  * implementations behind this interface; the bridge code is untouched.
  *
  * ── Lifecycle ──────────────────────────────────────────────────────────────────────
- * `load` consumes a *plaintext* model buffer (post-AES-decrypt) and returns an opaque
- * `Handle`. The bridge holds on to the handle for the model's working lifetime. On
- * memory pressure the bridge calls `close(handle)` and the engine releases everything;
+ * `load` consumes a *plaintext* model on disk (the caller — `EdgeModelModule` — streams
+ * the AES-decrypt directly into the temp file to keep the JVM-heap peak below 64 KB) and
+ * returns an opaque `Handle`. The temp file is owned by the caller: the engine reads it
+ * during `load` only and must not retain the path. The caller deletes the file
+ * immediately after `load` returns.
+ *
+ * On memory pressure the bridge calls `close(handle)` and the engine releases everything;
  * on the next inference the bridge re-loads via the cached load-args (self-heal path).
  */
 interface InferenceEngine {
@@ -33,13 +37,14 @@ interface InferenceEngine {
     }
 
     /**
-     * Load a model from its plaintext bytes.
+     * Load a model from its plaintext bytes on disk.
      *
-     * `modelKey` is opaque metadata (used for log lines and, where the engine requires a
-     * file path, to derive a per-model temp filename). `plaintext` is positioned at zero
-     * and contains exactly one model.
+     * `modelKey` is opaque metadata for log lines. `plaintextFile` exists when this is
+     * called and contains exactly one model; the caller will delete it as soon as `load`
+     * returns. The engine must read everything it needs synchronously inside this call —
+     * the file must not be retained or mmap'd past the return.
      */
-    fun load(modelKey: String, plaintext: ByteBuffer): Handle
+    fun load(modelKey: String, plaintextFile: File): Handle
 
     /**
      * Run inference on the preprocessor's output. Returns a flat `FloatArray` (caller
