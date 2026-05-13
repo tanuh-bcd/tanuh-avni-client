@@ -221,19 +221,23 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
             // images doesn't pile up native memory and trigger onTrimMemory (which would evict
             // the model). The preprocessor never retains `raw` past return.
             try {
-                // Diagnostic — log decoded bitmap geometry + EXIF orientation. If EXIF reports
-                // anything other than 1 (NORMAL), the on-screen image is rotated relative to the
-                // raw pixels we feed the model. The TANUH PoC has the same `decodeFile` codepath,
-                // so for parity-comparison runs both apps should agree. But if training data was
-                // pre-rotated and field images aren't, the model sees inputs it wasn't trained on.
-                val exif = try { ExifInterface(imagePath) } catch (e: Exception) { null }
-                val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
-                Log.d(TAG, "decodeFile: w=${raw.width} h=${raw.height} config=${raw.config} exifOrientation=$orientation")
+                if (BuildConfig.DEBUG) {
+                    // Diagnostic — log decoded bitmap geometry + EXIF orientation. If EXIF reports
+                    // anything other than 1 (NORMAL), the on-screen image is rotated relative to the
+                    // raw pixels we feed the model. The TANUH PoC has the same `decodeFile` codepath,
+                    // so for parity-comparison runs both apps should agree. But if training data was
+                    // pre-rotated and field images aren't, the model sees inputs it wasn't trained on.
+                    val exif = try { ExifInterface(imagePath) } catch (e: Exception) { null }
+                    val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
+                    Log.d(TAG, "decodeFile: w=${raw.width} h=${raw.height} config=${raw.config} exifOrientation=$orientation")
+                }
 
                 val preprocessor = Preprocessors.resolve(contract.preprocessorName)
                 val preprocessed = preprocessor.preprocess(raw, contract.preprocessorParams)
                 val output = engine.run(handle, preprocessed)
-                Log.d(TAG, "outputTensor: size=${output.size} first8=${output.take(8)}")
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "outputTensor: size=${output.size} first8=${output.take(8)}")
+                }
 
                 val decoder = Decoders.resolve(contract.decoderName)
                 promise.resolve(decoder.decode(output, longArrayOf(output.size.toLong()), contract.decoderParams))
@@ -307,7 +311,9 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
                 "Unknown engine '${contract.engine}'. Known: ${engines.keys}. " +
                 "Add a new InferenceEngine implementation in `engine/` and register it in EdgeModelModule.engines."
             )
-        Log.d(TAG, "buildHandle($modelKey): engine=${contract.engine}, preprocessor=${contract.preprocessorName}, decoder=${contract.decoderName}, plaintext=${plaintext.capacity()} bytes")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "buildHandle($modelKey): engine=${contract.engine}, preprocessor=${contract.preprocessorName}, decoder=${contract.decoderName}, plaintext=${plaintext.capacity()} bytes")
+        }
         val handle = engine.load(modelKey, plaintext)
         handles[modelKey] = handle
         contracts[modelKey] = contract
@@ -339,7 +345,9 @@ class EdgeModelModule(reactContext: ReactApplicationContext) :
         val ciphertextLen = totalLen - GCM_IV_BYTES
         val plaintextLen = (ciphertextLen - GCM_TAG_BITS / 8).toInt()
 
-        Log.d(TAG, "decryptToDirectBuffer($encryptedAssetPath): total=$totalLen, plaintext=$plaintextLen bytes")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "decryptToDirectBuffer($encryptedAssetPath): total=$totalLen, plaintext=$plaintextLen bytes")
+        }
 
         val mapped = FileInputStream(fd.fileDescriptor).use { fis ->
             fis.channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, totalLen)

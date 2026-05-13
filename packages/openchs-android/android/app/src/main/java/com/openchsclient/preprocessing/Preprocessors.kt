@@ -2,6 +2,7 @@ package com.openchsclient.preprocessing
 
 import android.graphics.Bitmap
 import android.util.Log
+import com.openchsclient.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -214,14 +215,17 @@ object MeanTargetBgrRoundedPreprocessor : ImagePreprocessor {
         // Diagnostic logging — emits per-channel input stats so we can compare against the
         // TANUH PoC (~/IdeaProjects/aiapp) on the same image. If the model saturates on
         // both apps, the model is the issue. If it saturates here but not on the PoC, the
-        // divergence is in this preprocessor and one of these stats will differ.
-        Log.d("Preproc", "MeanTargetBgrRounded: w=$w h=$h interp=$interpolation order=$channelOrder layout=$layout " +
-            "scale=$scale meanTarget=$meanTarget round=$roundDecimals uint8Cast=$uint8Cast")
-        Log.d("Preproc", "  rawPixelMean: R=%.4f G=%.4f B=%.4f".format(meanR, meanG, meanB))
-        Log.d("Preproc", "  perChannelScale: R=%.6f G=%.6f B=%.6f".format(scaleR, scaleG, scaleB))
-        Log.d("Preproc", "  tensorStats: ${planeSummary("plane0", data, 0, plane)}")
-        Log.d("Preproc", "  tensorStats: ${planeSummary("plane1", data, plane, plane)}")
-        Log.d("Preproc", "  tensorStats: ${planeSummary("plane2", data, 2 * plane, plane)}")
+        // divergence is in this preprocessor and one of these stats will differ. Gated
+        // behind BuildConfig.DEBUG so release builds skip the planeSummary traversals.
+        if (BuildConfig.DEBUG) {
+            Log.d("Preproc", "MeanTargetBgrRounded: w=$w h=$h interp=$interpolation order=$channelOrder layout=$layout " +
+                "scale=$scale meanTarget=$meanTarget round=$roundDecimals uint8Cast=$uint8Cast")
+            Log.d("Preproc", "  rawPixelMean: R=%.4f G=%.4f B=%.4f".format(meanR, meanG, meanB))
+            Log.d("Preproc", "  perChannelScale: R=%.6f G=%.6f B=%.6f".format(scaleR, scaleG, scaleB))
+            Log.d("Preproc", "  tensorStats: ${planeSummary("plane0", data, 0, plane)}")
+            Log.d("Preproc", "  tensorStats: ${planeSummary("plane1", data, plane, plane)}")
+            Log.d("Preproc", "  tensorStats: ${planeSummary("plane2", data, 2 * plane, plane)}")
+        }
 
         return ImagePreprocessor.Result(data, longArrayOf(1, 3, h.toLong(), w.toLong()))
     }
